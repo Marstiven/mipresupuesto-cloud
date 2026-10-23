@@ -1,0 +1,33 @@
+## .NET Core / C# gitignore
+bin/
+obj/
+out/
+
+# Visual Studio
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+
+# JetBrains Rider / VS Code
+.idea/
+.vscode/
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+build/
+bld/
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
