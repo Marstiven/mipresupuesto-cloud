@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using MiPresupuesto.Api.Models;
 
 namespace MiPresupuesto.Api.Data;
@@ -19,7 +19,7 @@ public class ApplicationDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // Indices
+        // Índices
         modelBuilder.Entity<Usuario>()
             .HasIndex(u => u.Email)
             .IsUnique();
@@ -30,6 +30,23 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<PresupuestoMensual>()
             .HasIndex(p => new { p.UsuarioId, p.Mes, p.Anio })
             .IsUnique();
+
+        // Configuración de precisión para valores monetarios
+        modelBuilder.Entity<Transaccion>()
+            .Property(t => t.Monto)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<PresupuestoMensual>()
+            .Property(p => p.IngresoEstimado)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<PresupuestoMensual>()
+            .Property(p => p.MetaAhorro)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<PagoRecurrente>()
+            .Property(p => p.Monto)
+            .HasPrecision(18, 2);
 
         // Categorías por defecto del sistema
         modelBuilder.Entity<Categoria>().HasData(

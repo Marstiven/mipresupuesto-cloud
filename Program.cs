@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using MiPresupuesto.Api.Data;
+using MiPresupuesto.Api.Middlewares;
 using MiPresupuesto.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -42,8 +43,9 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
-// 4. Controladores y CORS
+// 4. Controladores, CORS y Health Checks
 builder.Services.AddControllers();
+builder.Services.AddHealthChecks();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
@@ -83,6 +85,9 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// Middleware Global de Excepciones
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+
 // Pipeline HTTP
 if (app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("Swagger:EnableInProduction", true))
 {
@@ -97,6 +102,7 @@ app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
 
+app.MapHealthChecks("/health");
 app.MapControllers();
 
 app.Run();
