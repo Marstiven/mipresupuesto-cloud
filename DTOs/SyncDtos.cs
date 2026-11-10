@@ -1,4 +1,4 @@
-﻿using MiPresupuesto.Api.Models;
+using MiPresupuesto.Api.Models;
 
 namespace MiPresupuesto.Api.DTOs;
 
@@ -16,6 +16,7 @@ public class SyncPushRequestDto
     public List<Transaccion> Transacciones { get; set; } = new();
     public List<PresupuestoMensual> Presupuestos { get; set; } = new();
     public List<PagoRecurrente> PagosRecurrentes { get; set; } = new();
+    public List<Categoria> Categorias { get; set; } = new();
 }
 
 public class SyncPushResponseDto

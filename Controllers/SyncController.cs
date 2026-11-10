@@ -13,10 +13,12 @@ namespace MiPresupuesto.Api.Controllers;
 public class SyncController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
+    private readonly ILogger<SyncController> _logger;
 
-    public SyncController(ApplicationDbContext db)
+    public SyncController(ApplicationDbContext db, ILogger<SyncController> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     private Guid? ObtenerUsuarioId()
@@ -30,32 +32,33 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>
-    /// Descarga todo el histórico del usuario para restaurar una app limpia o nuevo celular.
+    /// Descarga los datos del usuario. Si se especifica 'since', solo retorna cambios posteriores a dicha fecha (Sincronización Delta).
     /// </summary>
     [HttpGet("pull")]
-    public async Task<ActionResult<SyncPullResponseDto>> Pull()
+    public async Task<ActionResult<SyncPullResponseDto>> Pull([FromQuery] DateTime? since = null)
     {
         if (ObtenerUsuarioId() is not { } usuarioId)
         {
             return Unauthorized(new { mensaje = "Usuario no autenticado o token inválido." });
         }
 
-        var transacciones = await _db.Transacciones
-            .Where(t => t.UsuarioId == usuarioId)
-            .OrderByDescending(t => t.Fecha)
-            .ToListAsync();
+        var queryTransacciones = _db.Transacciones.Where(t => t.UsuarioId == usuarioId);
+        var queryCategorias = _db.Categorias.Where(c => c.UsuarioId == null || c.UsuarioId == usuarioId);
+        var queryPresupuestos = _db.PresupuestosMensuales.Where(p => p.UsuarioId == usuarioId);
+        var queryPagos = _db.PagosRecurrentes.Where(p => p.UsuarioId == usuarioId);
 
-        var categorias = await _db.Categorias
-            .Where(c => c.UsuarioId == null || c.UsuarioId == usuarioId)
-            .ToListAsync();
+        if (since.HasValue)
+        {
+            var sinceUtc = since.Value.ToUniversalTime();
+            queryTransacciones = queryTransacciones.Where(t => t.UpdatedAt >= sinceUtc);
+            queryPresupuestos = queryPresupuestos.Where(p => p.UpdatedAt >= sinceUtc);
+            queryPagos = queryPagos.Where(p => p.UpdatedAt >= sinceUtc);
+        }
 
-        var presupuestos = await _db.PresupuestosMensuales
-            .Where(p => p.UsuarioId == usuarioId)
-            .ToListAsync();
-
-        var pagos = await _db.PagosRecurrentes
-            .Where(p => p.UsuarioId == usuarioId)
-            .ToListAsync();
+        var transacciones = await queryTransacciones.OrderByDescending(t => t.Fecha).ToListAsync();
+        var categorias = await queryCategorias.ToListAsync();
+        var presupuestos = await queryPresupuestos.ToListAsync();
+        var pagos = await queryPagos.ToListAsync();
 
         return Ok(new SyncPullResponseDto
         {
@@ -68,7 +71,7 @@ public class SyncController : ControllerBase
     }
 
     /// <summary>
-    /// Recibe un lote de movimientos nuevos/modificados en local y los guarda o actualiza (Upsert).
+    /// Recibe un lote de movimientos nuevos/modificados en local y aplica un Upsert con resolución de conflictos por timestamp.
     /// </summary>
     [HttpPost("push")]
     public async Task<ActionResult<SyncPushResponseDto>> Push([FromBody] SyncPushRequestDto dto)
@@ -111,7 +114,7 @@ public class SyncController : ControllerBase
             }
         }
 
-        // 2. Upsert Presupuestos (Batch query)
+        // 2. Upsert Presupuestos (Batch query con resolución de conflictos por marca temporal)
         if (dto.Presupuestos != null && dto.Presupuestos.Count > 0)
         {
             var existentes = await _db.PresupuestosMensuales
@@ -126,11 +129,11 @@ public class SyncController : ControllerBase
                 {
                     _db.PresupuestosMensuales.Add(p);
                 }
-                else
+                else if (p.UpdatedAt >= existente.UpdatedAt)
                 {
                     existente.IngresoEstimado = p.IngresoEstimado;
                     existente.MetaAhorro = p.MetaAhorro;
-                    existente.UpdatedAt = DateTime.UtcNow;
+                    existente.UpdatedAt = p.UpdatedAt;
                 }
                 procesadas++;
             }
@@ -165,7 +168,39 @@ public class SyncController : ControllerBase
             }
         }
 
+        // 4. Upsert Categorías personalizadas del usuario
+        if (dto.Categorias != null && dto.Categorias.Count > 0)
+        {
+            var categoriasUsuario = dto.Categorias.Where(c => c.UsuarioId == null || c.UsuarioId == usuarioId).ToList();
+            var ids = categoriasUsuario.Where(c => c.Id > 0).Select(c => c.Id).ToList();
+
+            var existentes = await _db.Categorias
+                .Where(x => x.UsuarioId == usuarioId && ids.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id);
+
+            foreach (var c in categoriasUsuario)
+            {
+                c.UsuarioId = usuarioId; // Proteger las categorías maestras del sistema
+                if (c.Id <= 0 || !existentes.TryGetValue(c.Id, out var existente))
+                {
+                    c.Id = 0; // Para que PostgreSQL genere el ID automático si es nueva
+                    _db.Categorias.Add(c);
+                }
+                else
+                {
+                    existente.Nombre = c.Nombre;
+                    existente.Icono = c.Icono;
+                    existente.ColorHex = c.ColorHex;
+                    existente.Tipo = c.Tipo;
+                    existente.Activa = c.Activa;
+                }
+                procesadas++;
+            }
+        }
+
         await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Sincronización push completada para usuario {UsuarioId}. Registros procesados: {Total}", usuarioId, procesadas);
 
         return Ok(new SyncPushResponseDto
         {
